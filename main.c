@@ -53,8 +53,6 @@ int readItemName(char *name, size_t size) {
     return strlen(name) > 0;
 }
 
-/* Reads one inventory record: name line + quantity line.
-   Returns 1 for success, 0 for end of file, -1 for invalid data. */
 int readRecord(FILE *file, char *name, size_t size, int *quantity) {
     char quantityLine[100];
     char *end;
@@ -116,7 +114,9 @@ void removeItem(void) {
     FILE *file, *temp;
     char name[MAX_NAME];
     char storedName[MAX_NAME];
+
     int quantity, removeQuantity;
+    int availableQuantity = 0;
     int found = 0;
     int status = 0;
     int result;
@@ -152,6 +152,7 @@ void removeItem(void) {
 
         if (!found && strcmp(name, storedName) == 0) {
             found = 1;
+            availableQuantity = quantity;
 
             if (removeQuantity > quantity) {
                 status = 3;
@@ -159,7 +160,6 @@ void removeItem(void) {
             }
             else if (removeQuantity == quantity) {
                 status = 2;
-                /* Do not copy the item: its quantity becomes zero. */
             }
             else {
                 status = 1;
@@ -187,6 +187,13 @@ void removeItem(void) {
         return;
     }
 
+    if (status == 3) {
+        remove(TEMP_FILE);
+        printf("Insufficient stock. Available quantity: %d\n",
+               availableQuantity);
+        return;
+    }
+
     if (remove(INVENTORY_FILE) != 0) {
         remove(TEMP_FILE);
         printf("Error updating inventory file!\n");
@@ -202,9 +209,6 @@ void removeItem(void) {
         printf("Quantity successfully updated!\n");
     else if (status == 2)
         printf("Item removed from inventory!\n");
-    else if (status == 3)
-        printf("Insufficient stock. Available quantity: %d\n",
-               quantity);
 }
 
 void listInventory(void) {
