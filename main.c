@@ -3,11 +3,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <limits.h>
 
 #define INVENTORY_FILE "inventory.txt"
 #define TEMP_FILE "inventory.tmp"
+#define MAX_NAME 100
 
-void clearInput() {
+void clearInput(void) {
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
 }
@@ -28,7 +30,7 @@ int readPositiveInt(const char *message, int *number) {
         end++;
 
     if (end == input || *end != '\0' ||
-        value <= 0 || value > 2147483647)
+        value <= 0 || value > INT_MAX)
         return 0;
 
     *number = (int)value;
@@ -46,14 +48,45 @@ int readItemName(char *name, size_t size) {
         return 0;
     }
 
-    name[strcspn(name, "\n")] = '\0';
+    name[strcspn(name, "\r\n")] = '\0';
 
     return strlen(name) > 0;
 }
 
-void addItem() {
+/* Reads one inventory record: name line + quantity line.
+   Returns 1 for success, 0 for end of file, -1 for invalid data. */
+int readRecord(FILE *file, char *name, size_t size, int *quantity) {
+    char quantityLine[100];
+    char *end;
+    long value;
+
+    if (fgets(name, size, file) == NULL)
+        return 0;
+
+    if (strchr(name, '\n') == NULL && !feof(file))
+        return -1;
+
+    name[strcspn(name, "\r\n")] = '\0';
+
+    if (fgets(quantityLine, sizeof(quantityLine), file) == NULL)
+        return -1;
+
+    value = strtol(quantityLine, &end, 10);
+
+    while (isspace((unsigned char)*end))
+        end++;
+
+    if (end == quantityLine || *end != '\0' ||
+        value < 0 || value > INT_MAX)
+        return -1;
+
+    *quantity = (int)value;
+    return 1;
+}
+
+void addItem(void) {
     FILE *file;
-    char name[100];
+    char name[MAX_NAME];
     int quantity;
 
     if (!readItemName(name, sizeof(name))) {
@@ -79,23 +112,22 @@ void addItem() {
     printf("Item added successfully!\n");
 }
 
-void removeItem() {
+void removeItem(void) {
     FILE *file, *temp;
-    char name[100];
-    char storedName[100];
+    char name[MAX_NAME];
+    char storedName[MAX_NAME];
     int quantity, removeQuantity;
     int found = 0;
     int status = 0;
-    int available = 0;
+    int result;
 
     if (!readItemName(name, sizeof(name))) {
         printf("Invalid item name!\n");
         return;
     }
 
-    if (!readPositiveInt(
-        "Enter the quantity to be removed: ",
-        &removeQuantity)) {
+    if (!readPositiveInt("Enter the quantity to be removed: ",
+                         &removeQuantity)) {
         printf("Invalid quantity!\n");
         return;
     }
@@ -115,40 +147,39 @@ void removeItem() {
         return;
     }
 
-    while (fgets(storedName, sizeof(storedName), file) != NULL) {
-        storedName[strcspn(storedName, "\n")] = '\0';
-
-        if (fscanf(file, "%d", &quantity) != 1) {
-            fclose(file);
-            fclose(temp);
-            remove(TEMP_FILE);
-            printf("Error reading inventory file!\n");
-            return;
-        }
-
-        clearInput();
+    while ((result = readRecord(file, storedName,
+                                sizeof(storedName), &quantity)) == 1) {
 
         if (!found && strcmp(name, storedName) == 0) {
             found = 1;
-            available = quantity;
 
             if (removeQuantity > quantity) {
                 status = 3;
                 fprintf(temp, "%s\n%d\n", storedName, quantity);
-            } else if (removeQuantity == quantity) {
+            }
+            else if (removeQuantity == quantity) {
                 status = 2;
-            } else {
+                /* Do not copy the item: its quantity becomes zero. */
+            }
+            else {
                 status = 1;
                 fprintf(temp, "%s\n%d\n",
                         storedName, quantity - removeQuantity);
             }
-        } else {
+        }
+        else {
             fprintf(temp, "%s\n%d\n", storedName, quantity);
         }
     }
 
     fclose(file);
     fclose(temp);
+
+    if (result == -1) {
+        remove(TEMP_FILE);
+        printf("Error reading inventory file!\n");
+        return;
+    }
 
     if (!found) {
         remove(TEMP_FILE);
@@ -167,84 +198,83 @@ void removeItem() {
         return;
     }
 
-    if (status == 1) {
+    if (status == 1)
         printf("Quantity successfully updated!\n");
-    } else if (status == 2) {
+    else if (status == 2)
         printf("Item removed from inventory!\n");
-    } else {
+    else if (status == 3)
         printf("Insufficient stock. Available quantity: %d\n",
-               available);
-    }
+               quantity);
 }
 
-void listInventory() {
+void listInventory(void) {
     FILE *file;
-    char name[100];
+    char name[MAX_NAME];
     int quantity;
     int found = 0;
+    int result;
 
     file = fopen(INVENTORY_FILE, "r");
 
+    printf("=============================\n");
+    printf("       Current Inventory\n");
+    printf("=============================\n");
+
     if (file == NULL) {
-        printf("Inventory is empty.\n");
+        printf("The inventory is empty.\n");
         return;
     }
 
-    printf("\n========== Inventory ==========\n");
-
-    while (fgets(name, sizeof(name), file) != NULL) {
-        name[strcspn(name, "\n")] = '\0';
-
-        if (fscanf(file, "%d", &quantity) != 1)
-            break;
-
-        clearInput();
-
-        printf("Item: %s | Quantity: %d\n", name, quantity);
+    while ((result = readRecord(file, name, sizeof(name),
+                                &quantity)) == 1) {
+        printf("Name: %s\n", name);
+        printf("Quantity: %d\n\n", quantity);
         found = 1;
     }
 
-    if (!found)
-        printf("Inventory is empty.\n");
-
-    printf("================================\n");
-
     fclose(file);
+
+    if (result == -1)
+        printf("Error reading inventory file!\n");
+    else if (!found)
+        printf("The inventory is empty.\n");
 }
 
-int main() {
-    int option;
+int main(void) {
+    char input[100];
     char answer;
+    char *end;
+    long option;
 
     while (1) {
-        printf("\n==================================\n");
+        printf("\n================================\n");
         printf("       Inventory Control\n");
-        printf("==================================\n");
+        printf("================================\n");
         printf("1. Add Item\n");
         printf("2. Remove Item\n");
         printf("3. List Inventory\n");
         printf("4. Exit\n");
         printf("Option: ");
 
-        char input[100];
-        char *end;
-        long value;
-
         if (fgets(input, sizeof(input), stdin) == NULL)
             break;
 
-        value = strtol(input, &end, 10);
+        option = strtol(input, &end, 10);
 
         while (isspace((unsigned char)*end))
             end++;
 
         if (end == input || *end != '\0' ||
-            value < 1 || value > 4) {
+            option < 1 || option > 4) {
             printf("Invalid option! Please try again.\n");
             continue;
         }
 
-        option = (int)value;
+        if (option == 4) {
+            printf("Thank you for using Inventory Control! "
+                   "See you next time.\n");
+            break;
+        }
 
         switch (option) {
             case 1:
@@ -258,11 +288,6 @@ int main() {
             case 3:
                 listInventory();
                 break;
-
-            case 4:
-                printf("Thank you for using Inventory Control! "
-                       "See you next time.\n");
-                return 0;
         }
 
         printf("\nDo you want to perform another operation? (y/n): ");
@@ -271,19 +296,8 @@ int main() {
             break;
 
         clearInput();
-        answer = (char)tolower((unsigned char)answer);
 
-        while (answer != 'y' && answer != 'n') {
-            printf("Please enter y or n: ");
-
-            if (scanf(" %c", &answer) != 1)
-                return 0;
-
-            clearInput();
-            answer = (char)tolower((unsigned char)answer);
-        }
-
-        if (answer == 'n') {
+        if (tolower((unsigned char)answer) != 'y') {
             printf("Thank you for using Inventory Control! "
                    "See you next time.\n");
             break;
